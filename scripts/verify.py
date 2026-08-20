@@ -71,7 +71,10 @@ def is_committed(path: pathlib.Path) -> bool | None:
     if TRACKED is None:
         return None
     try:
-        rel = str(path.resolve().relative_to(labkit.repo_root()))
+        # `git ls-files` always prints forward slashes, so compare in the same form.
+        # str() on a WindowsPath yields backslashes, which never match and made every
+        # file in a subdirectory look uncommitted on Windows. No-op on macOS/Linux.
+        rel = path.resolve().relative_to(labkit.repo_root()).as_posix()
     except ValueError:
         return None
     return rel in TRACKED
