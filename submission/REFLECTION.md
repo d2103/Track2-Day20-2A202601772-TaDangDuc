@@ -161,11 +161,49 @@ load test.
 
 ## 6. Bonus  *(optional — tối đa 20 điểm)*
 
-> Bỏ trống nếu không làm. Xem `bonus/README.md`.
+**Đã làm:** B2 — `sweep-ctx`, đo chi phí prefill theo độ dài prompt
+(`benchmarks/bonus-ctx-len-sweep.md`). Đây là knob khác hẳn §5: §5 đổi *nơi* weights nằm,
+phần này giữ nguyên mọi thứ và chỉ đổi *độ dài prompt*.
 
-**Đã làm:** _(chưa làm)_
+**Numbers:**
 
----
+```
+change:  prompt length 256 → 8192 token (ngl=99, threads=8, cùng model UD-Q4_K_XL)
+before:  1451.8 tok/s prefill  (256 token,  TTFT contribution 176.3 ms)
+after:   4147.5 tok/s prefill  (8192 token, TTFT contribution 1975.2 ms)
+speedup: 2.86× throughput prefill — chi phí mỗi token giảm 2.86 lần
+         tổng thời gian chỉ bằng 0.35× mức scaling tuyến tính dự đoán
+```
+
+**Điều này nói lên gì mà deck chưa nói:**
+
+Deck dạy attention là O(N²) và dùng điều đó để biện minh cho disaggregated
+prefill/decode. Trên máy tôi, trong dải 256-8192 token, **prefill chạy dưới tuyến tính**:
+prompt dài gấp 32 lần nhưng throughput lại *tăng* 2.86×. Lý do là O(N²) chỉ là một số
+hạng; các phép chiếu tuyến tính và MLP là O(N), và trên model 2B ở prompt ngắn chúng áp
+đảo. Quan trọng hơn: ở 256 token, GPU đang bị bỏ đói — batch quá nhỏ để lấp kín RTX 3060,
+nên chi phí cố định mỗi lần gọi kernel bị chia cho quá ít token. Kéo prompt dài ra chính
+là làm batch to lên.
+
+Đây là cùng một cơ chế amortize mà tôi đã đo ở phần base khi 4 slot batching cho 1.60×
+throughput — chỉ khác là ở đây các "slot" nằm bên trong một prompt duy nhất. Nói cách
+khác, prefill dài và continuous batching đang mua cùng một thứ: nhiều token hơn cho mỗi
+lần đọc weights.
+
+Nhưng phần lợi đó có đáy. Tỉ lệ giữa các lần gấp đôi liên tiếp là 1.33× → 1.79× →
+**1.98×**, và throughput giữa 4096 và 8192 chỉ nhích 1.1%. GPU đã bão hoà tính toán, nên
+từ 8192 trở đi mỗi lần gấp đôi prompt sẽ tốn đúng gấp đôi thời gian. Điểm mà O(N²) thật
+sự vượt lên nằm **ngoài dải tôi đo** — tôi không tuyên bố đã nhìn thấy đường cong bậc
+hai, vì tôi chưa thấy.
+
+Hệ quả thực tế mà tôi rút ra cho chính pipeline RAG ở §4: mỗi chunk 512 token tốn thêm
+~123 ms TTFT, trả đủ trên **mọi** request. Với ngân sách TTFT 1 giây tôi chỉ đủ chỗ cho
+khoảng 3 chunk. Và dưới load thì con số này không phải chuyện của riêng request đó: ở §3
+tôi đo được server chỉ có 4 slot và xử lý 3010 prompt token trong 56.4 giây. Nếu 172
+request đó mỗi cái mang 8192 token context, tổng prefill thành ~1.4 triệu token, tức hơn
+5 phút công việc nhồi vào cửa sổ 56 giây. Prompt dài không chỉ làm chậm chính nó — nó
+giữ slot lâu hơn và làm sâu thêm hàng đợi của tất cả những người phía sau. Đó là câu trả
+lời cụ thể cho đề xuất "cứ nhồi thêm context vì context window cho phép".
 
 ## 7. Điều làm bạn ngạc nhiên nhất  *(optional)*
 
